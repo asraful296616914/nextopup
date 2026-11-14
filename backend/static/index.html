@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Top-up admin</title>
+<style>
+:root{--p:#5B3CC4;--bg:#F4F2FB;--line:#E3DFF3;--mut:#5B6070}
+*{box-sizing:border-box}body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:#1B1B2F}
+header{background:#fff;border-bottom:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+header b.t{font-size:18px;margin-right:auto}
+button,input,select{font:inherit;border-radius:8px;border:1px solid #B9B1E0;padding:8px 12px;background:#fff}
+button{cursor:pointer}button.p,button.on{background:var(--p);color:#fff;border-color:var(--p)}button.d{color:#9E1B32;border-color:#9E1B32}
+:focus-visible{outline:3px solid #A99BEA;outline-offset:2px}
+main{padding:16px;max-width:1100px;margin:auto}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:680px}th,td{text-align:left;padding:8px;border-top:1px solid var(--line);vertical-align:middle}
+th{color:var(--mut);font-weight:600;border-top:0}
+form,.pills,.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tag{padding:2px 10px;border-radius:99px;font-size:13px;font-weight:600;background:#E6E9FF}
+.completed,.approved,.received{background:#DDF5E4;color:#145A2A}.cancelled,.rejected{background:#FBE0E5;color:#8A1730}.inactive{background:#EEE;color:#444}
+.thumb{width:140px;height:140px;border-radius:12px;border:1px dashed #B9B1E0;display:flex;align-items:center;justify-content:center;color:var(--mut);overflow:hidden}
+.wide{width:220px;height:90px}.item{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.thumb img{width:100%;height:100%;object-fit:cover}
+#msg{color:#8A1730;min-height:1.4em}.hide{display:none}.ok{color:#145A2A}
+</style></head><body>
+<div id="login" class="card" style="max-width:360px;margin:48px auto"><h2 style="margin-top:0">Admin login</h2>
+<form id="lf" style="flex-direction:column;align-items:stretch"><input id="em" type="email" placeholder="Email" required autocomplete="username"><input id="pw" type="password" placeholder="Password" required autocomplete="current-password"><button class="p">Log in</button></form></div>
+<div id="app" class="hide"><header><b class="t">Top-up admin</b>
+<button data-tab="packages" class="on">Packages</button>
+<button data-tab="orders">Orders <b id="b-orders"></b></button>
+<button data-tab="topups">Add-money requests <b id="b-topups"></b></button>
+<button data-tab="site">Site &amp; banners</button><button data-tab="trx">Transactions</button><button data-tab="users">Users</button><button id="out">Log out</button></header>
+<main><div id="msg" role="alert"></div><div id="view"></div></main></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pad=n=>"#"+String(n).padStart(2,"0"),T=s=>new Date(s).toLocaleString();
+const tag=s=>`<span class="tag ${esc(s)}">${esc(s)}</span>`;
+let token=sessionStorage.getItem("t"),tab="packages",cat="id_code",tq="",pkgs=[];
+async function api(path,method="GET",body){
+  const r=await fetch("/api"+path,{method,headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){const d=j.detail;throw new Error(typeof d==="string"?d:"Check the values you entered");}
+  return j;
+}
+const say=(t,good)=>{const m=$("#msg");m.textContent=t||"";m.className=good?"ok":""};
+async function act(fn,done){try{say();await fn();await show();poll();if(done)say(done,true)}catch(e){say(e.message)}}
+const readFile=f=>new Promise((res,rej)=>{if(f.size>4e6)return rej(new Error("Image too large (max 4 MB)"));const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("Could not read the file"));r.readAsDataURL(f)});
+$("#lf").onsubmit=async e=>{e.preventDefault();
+  try{const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("#em").value,password:$("#pw").value})});
+  const j=await r.json();if(!r.ok||j.role!=="admin")throw 0;token=j.token;sessionStorage.setItem("t",token);start()}catch{alert("Wrong email or password, or not an admin account")}};
+$("#out").onclick=()=>{sessionStorage.removeItem("t");location.reload()};
+document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("on",x===b));say();show()});
+function start(){$("#login").classList.add("hide");$("#app").classList.remove("hide");show();poll();setInterval(poll,15000)}
+const post=(p,b)=>api(p,"POST",b);
+async function show(){
+  const v=$("#view");
+  try{
+  if(tab==="packages"){
+    const [cats,all]=await Promise.all([api("/admin/categories"),api("/admin/packages")]);pkgs=all;
+    if(!cats.some(c=>c.key===cat))cat=cats[0].key;
+    const c=cats.find(x=>x.key===cat),list=all.filter(p=>p.category===cat);
+    v.innerHTML=`<div class="card pills">${cats.map(x=>`<button data-cat="${esc(x.key)}" class="${x.key===cat?"on":""}">${esc(x.title)}</button>`).join("")}</div>
+    <div class="card"><div class="row"><div class="thumb">${c.image_id?`<img src="/api/img/${esc(c.image_id)}" alt="">`:"No image yet"}</div>
+    <form id="cf" style="flex-direction:column;align-items:stretch"><label>Section name <input id="ctl" value="${esc(c.title)}" required></label><label>Section picture <input id="cimg" type="file" accept="image/*"></label><button class="p">Save section</button></form></div></div>
+    <div class="card"><b>Add or edit a package in this section</b><form id="pf" style="margin-top:8px"><input type="hidden" id="pno"><input id="ttl" placeholder="Title (shown to customers)" required><input id="dia" type="number" min="0" placeholder="Diamonds" required style="width:120px"><input id="prc" type="number" min="1" placeholder="Price ৳" required style="width:120px"><input id="srt" type="number" placeholder="Sort" value="0" style="width:80px"><label><input id="act" type="checkbox" checked> Active</label><button class="p" id="sv">Add package</button><button type="button" id="cl" class="hide">Cancel edit</button></form></div>
+    <div class="card"><form id="bf"><b>Change every price in this section by</b><input id="pct" type="number" min="-90" max="500" placeholder="%" required style="width:90px"><span>%</span><button>Apply</button><small style="color:var(--mut)">e.g. 10 raises prices 10%, -5 lowers them 5%</small></form></div>
+    <div class="card"><table><tr><th>No.</th><th>Title</th><th>Diamonds</th><th>Price ৳</th><th>Status</th><th></th></tr>${list.map(p=>`<tr><td><b>${pad(p.pkg_no)}</b></td><td>${esc(p.title)}</td><td>${p.diamonds}</td><td><input type="number" min="1" value="${p.price}" data-pp="${p.pkg_no}" style="width:100px"> <button data-sp="${p.pkg_no}">Save price</button></td><td><button data-tg="${p.pkg_no}">${tag(p.active?"active":"inactive")}</button></td><td><button data-edit="${p.pkg_no}">Edit</button> <button class="d" data-del="${p.pkg_no}">Delete</button></td></tr>`).join("")||"<tr><td colspan=6>No packages here yet. Add the first one above.</td></tr>"}</table></div>`;
+    v.querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>{cat=b.dataset.cat;show()});
+    $("#cf").onsubmit=e=>{e.preventDefault();act(async()=>{const f=$("#cimg").files[0],b={title:$("#ctl").value};if(f)b.image_id=(await post("/admin/images",{data:await readFile(f)})).id;await api("/admin/categories/"+cat,"PUT",b)},"Section saved")};
+    $("#pf").onsubmit=e=>{e.preventDefault();const b={category:cat,title:$("#ttl").value,diamonds:+$("#dia").value,price:+$("#prc").value,sort:+$("#srt").value||0,active:$("#act").checked},n=$("#pno").value;act(()=>n?api("/admin/packages/"+n,"PATCH",b):post("/admin/packages",b),"Package saved")};
+    $("#cl").onclick=show;
+    $("#bf").onsubmit=e=>{e.preventDefault();const p=+$("#pct").value;confirm(`Change ALL prices in "${c.title}" by ${p}%?`)&&act(async()=>{const r=await post("/admin/packages/bulk-price",{category:cat,percent:p});say(r.changed+" prices updated",true)})};
+    v.querySelectorAll("[data-sp]").forEach(b=>b.onclick=()=>act(()=>api("/admin/packages/"+b.dataset.sp,"PATCH",{price:+v.querySelector(`[data-pp="${b.dataset.sp}"]`).value}),"Price saved"));
+    v.querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{const p=pkgs.find(x=>x.pkg_no==b.dataset.tg);act(()=>api("/admin/packages/"+p.pkg_no,"PATCH",{active:!p.active}))});
+    v.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{const p=pkgs.find(x=>x.pkg_no==b.dataset.edit);$("#pno").value=p.pkg_no;$("#ttl").value=p.title;$("#dia").value=p.diamonds;$("#prc").value=p.price;$("#srt").value=p.sort;$("#act").checked=p.active;$("#sv").textContent="Save "+pad(p.pkg_no);$("#cl").classList.remove("hide");$("#pf").scrollIntoView()});
+    v.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>confirm("Delete package "+pad(b.dataset.del)+"? Past orders keep their details.")&&act(()=>api("/admin/packages/"+b.dataset.del,"DELETE"),"Package deleted"));
+  }else if(tab==="site"){
+    const [s,bn,of]=await Promise.all([api("/admin/site"),api("/admin/items/banner"),api("/admin/items/offer")]);
+    const list=(kind,xs)=>xs.map(x=>`<div class="item" data-id="${esc(x.id)}"><div class="thumb wide"><img src="/api/img/${esc(x.image_id)}" alt=""></div><div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:6px">${kind==="offer"?`<input data-f="title" value="${esc(x.title)}" placeholder="Title">`:""}<input data-f="link" value="${esc(x.link)}" placeholder="Link (optional), e.g. /section/weekly_monthly"><div class="row"><label>Order <input data-f="sort" type="number" value="${x.sort}" style="width:80px"></label><label><input data-f="active" type="checkbox" ${x.active?"checked":""}> Show</label></div><label>Replace picture <input data-f="file" type="file" accept="image/*"></label><div class="row"><button class="p" data-sv="${kind}">Save</button><button class="d" data-rm="${kind}">Delete</button></div></div></div>`).join("")||"<p style='color:var(--mut)'>None yet.</p>";
+    const addf=(kind,t)=>`<form data-add="${kind}" style="margin-top:10px"><input type="file" accept="image/*" required>${kind==="offer"?'<input data-f="title" placeholder="Title">':""}<input data-f="link" placeholder="Link (optional)"><button class="p">${t}</button></form>`;
+    v.innerHTML=`<div class="card"><b>Website name, logo and notice</b><div class="row" style="margin-top:10px"><div class="thumb">${s.logo_image_id?`<img src="/api/img/${esc(s.logo_image_id)}" alt="" style="object-fit:contain">`:"No logo"}</div><form id="sf" style="flex-direction:column;align-items:stretch;flex:1;min-width:240px"><label>Website name <input id="sn" value="${esc(s.site_name)}" required></label><label>Logo <input id="sl" type="file" accept="image/*"></label><label>Notice bar text <input id="nt" value="${esc(s.notice)}"></label><label>bKash number (customers send money here) <input id="bk" value="${esc(s.bkash_number)}" inputmode="numeric" placeholder="01XXXXXXXXX"></label><label>bKash logo ${s.bkash_logo_image_id?`<img src="/api/img/${esc(s.bkash_logo_image_id)}" alt="" style="height:28px;vertical-align:middle">`:""} <input id="bkl" type="file" accept="image/*"></label><label>Nagad logo ${s.nagad_logo_image_id?`<img src="/api/img/${esc(s.nagad_logo_image_id)}" alt="" style="height:28px;vertical-align:middle">`:""} <input id="ngl" type="file" accept="image/*"></label><label>Wallet logo (your own wallet) ${s.wallet_logo_image_id?`<img src="/api/img/${esc(s.wallet_logo_image_id)}" alt="" style="height:28px;vertical-align:middle">`:""} <input id="wll" type="file" accept="image/*"></label><label>Nagad number <input id="ng" value="${esc(s.nagad_number)}" inputmode="numeric" placeholder="01XXXXXXXXX"></label><button class="p">Save</button></form></div></div>
+    <div class="card"><b>Home banners</b> <span style="color:var(--mut)">(the slider at the top, in this order)</span>${list("banner",bn)}${addf("banner","Add banner")}</div>
+    <div class="card"><div class="row"><b>Offer section</b><button type="button" id="otg" class="${s.offer_enabled?"p":""}">${s.offer_enabled?"ON, shown on home":"OFF, hidden"}</button><form id="of"><input id="ot" value="${esc(s.offer_title)}" required style="width:180px"><button>Save title</button></form></div><p style="color:var(--mut);margin:8px 0 0">While OFF, customers do not see this section at all.</p>${list("offer",of)}${addf("offer","Add offer")}</div>`;
